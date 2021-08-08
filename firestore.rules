@@ -1,0 +1,211 @@
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSeller(x){
+        return isUserLoggedIn()
+        && get(/databases/$(database)/documents/sellers/$(x)).data.ID == request.auth.uid;
+    }
+    function isUserLoggedIn(){
+        return request.auth.uid !=null;
+    }
+    function isSameAuthor(ID){
+        return request.auth.uid == ID;
+    }
+    function isString(a){
+        return a!=null && a is string;
+    }
+    function isNumber(b){
+        return b!=null && b is number;
+    }
+    function isDate(c){
+        return c!=null && c is timestamp;
+    }
+
+    match /products/{product=**} {
+    function validateProductStock(){
+        return isNumber(request.resource.data.productStock)
+        && request.resource.data.productStock>= 0;
+    }
+    function validateProductPrice(){
+        return isNumber(request.resource.data.productPrice)
+        && request.resource.data.productPrice>=0.0;
+    }
+    function validateProductsSold(){
+        return isNumber(request.resource.data.productsSold)
+        && request.resource.data.productsSold>=0
+    }
+    allow read,delete: if isUserLoggedIn();
+  	allow create: if isUserLoggedIn()
+    && validateProductStock()
+    && validateProductPrice()
+    && validateProductsSold()
+    && isString(request.resource.data.productName)&&
+    request.resource.data.productVATValue in [1.22, 1.095]
+    && request.resource.data.supplierReference !=null;
+  	allow update: if isUserLoggedIn()
+    && validateProductStock()
+    && validateProductsSold();
+  	}
+    match /tasks/{task} {
+    function checkStatus(){
+        return request.resource.data.taskStatus is string
+        && request.resource.data.taskStatus in ["Dokončano","Nedokončano"]
+        && isString(request.resource.data.taskContent)
+        && isNumber(request.resource.data.taskTitle)
+        && isString(request.resource.data.priority);
+    }
+    allow read, delete: if isUserLoggedIn()
+    && isSameAuthor(resource.data.uploaderID);
+    allow create: if isUserLoggedIn()
+    && isSameAuthor(request.resource.data.uploaderID)
+    && checkStatus();
+    allow update: if isUserLoggedIn()
+    && isSameAuthor(request.resource.data.uploaderID)
+    && isSameAuthor(resource.data.uploaderID)
+    && checkStatus();
+    }
+
+    match /customers/{customer=**} {
+    allow read: if isUserLoggedIn();
+    allow update: if isUserLoggedIn(); //isSeller(request.auth.id);
+    allow create: if isUserLoggedIn()
+    && isString(request.resource.data.customerName)
+    && isString(request.resource.data.customerSurname)
+    && isString(request.resource.data.customerAddress)
+    && isString(request.resource.data.customerPost)
+    && isString(request.resource.data.customerVAT)
+    && isString(request.resource.data.firmName); //isSeller(request.auth.id);
+    }
+    match /sellers/{seller=**} {
+    allow update: if isUserLoggedIn();
+    allow create, delete: if false;
+    allow read : if isUserLoggedIn();
+    }
+     match /reminders/{reminder} {
+    allow read : if isUserLoggedIn();
+    allow write: if false;
+    }
+     match /orders/{order} {
+     function isTimestampNotEmpty(){
+        return request.resource.data.orderTimestamp !=null &&
+        isDate(request.resource.data.orderTimestamp);
+     }
+     function validateOrder(){
+        return isNumber(request.resource.data.orderTotal) &&
+        request.resource.data.orderTotal >=0.0
+        && request.resource.data.productList.size() >=0
+        && request.resource.data.productDiscount.size() >=0
+        && request.resource.data.hasOrderDiscount.size() >=0
+        && (request.resource.data.orderDiscount >=0 && request.resource.data.orderDiscount <=1)
+        && isSeller(request.auth.uid)
+        && request.resource.data.sellerReference !=null
+        && request.resource.data.customerReference !=null;
+     }
+    allow read: if isUserLoggedIn();
+    allow delete: if false;
+    allow create: if isUserLoggedIn()
+    && isTimestampNotEmpty()
+    && validateOrder();
+    allow update: if isUserLoggedIn()
+    && isTimestampNotEmpty()
+    && request.resource.data.orderTimestamp == resource.data.orderTimestamp
+    && validateOrder();
+    }
+     match /reports/{report} {
+    allow read,delete: if isUserLoggedIn();
+    allow create,update: if isUserLoggedIn()
+    && request.resource.data.packageReferences.size()>0
+    && request.resource.data.packagesTotal.size()>=0
+    && request.resource.data.productsTotal.size() >0;
+    }
+    match /consignments/{consignment} {
+       function isTimestampNotEmpty(){
+        return request.resource.data.consignmentCreated !=null
+        && isDate(request.resource.data.consignmentCreated);
+     }
+     function validateOrder(){
+        return isNumber(request.resource.data.consignmentTotal) &&
+        request.resource.data.orderTotal >=0.0
+        && request.resource.data.consignmentProductList.size() >=0
+        && request.resource.data.consignmentProductDiscounts.size() >=0
+        && request.resource.data.hasOrderDiscount.size() >=0
+        && request.resource.data.customerReference!=null
+        && request.resource.data.sellerReference!=null
+        && request.resource.data.consignmentStatus in ["open","closed"]
+        && (request.resource.data.consignmentDiscount >=0
+        && request.resource.data.consignmentDiscount <=1)
+        && isSeller(request.auth.uid);
+     }
+    allow read: if isUserLoggedIn();
+    allow delete: if false;
+    allow create: if isUserLoggedIn()
+    && isTimestampNotEmpty()
+    && validateOrder();
+    allow update: if isUserLoggedIn()
+    && isSeller(request.auth)
+    && request.resource.data.consignmentClosed!=null;
+    }
+    match /packages/{pack}{
+        function checkPackage(){
+            return request.resource.data.packageProductNumber > 0
+            && request.resource.data.productReference !=null;
+        }
+    	allow read,delete: if isUserLoggedIn();
+    	allow create: if isUserLoggedIn()
+      && checkPackage();
+    	allow update: if isUserLoggedIn()
+      && checkPackage()
+      && isNumber(request.resource.data.receivedPackages)
+      && request.resource.data.receivedPackages>=resource.data.receivedPackages;
+    }
+    match /discounts/{discount}{
+    	allow create: if isUserLoggedIn()
+      && isSameAuthor(request.resource.data.sellerID)
+      && isSeller(request.auth.uid)
+      && request.resource.data.discountReference.size() >0
+      && isNumber(request.resource.data.discountPercentage)
+      && request.resource.data.discountPercentage >=0
+      && isDate(request.resource.data.discountCreationDate)
+      && request.resource.data.discountActive !=null;
+    	allow update: if isUserLoggedIn()
+      && isSameAuthor(resource.data.sellerID)
+      && isSeller(request.auth.uid)
+      && request.resource.data.discountActive !=null;
+      allow read,delete: if isUserLoggedIn()
+      && isSameAuthor(resource.data.sellerID)
+      && isSeller(request.auth.uid);
+      }
+    match /devices/{device}{
+      allow read: if isUserLoggedIn()
+      && isSameAuthor(resource.data.ID);
+    	allow create: if isUserLoggedIn()
+      && isSameAuthor(request.resource.data.ID)
+      && isString(request.resource.data.token);
+    	allow update: if isUserLoggedIn()
+      && isSameAuthor(resource.data.ID)
+      && isString(request.resource.data.token);
+      allow delete: if false;
+    }
+    match /references/{reference}{
+    	allow read, write: if false;
+    }
+    match /suppliers/{supplier=**}{
+    	allow read: if isUserLoggedIn();
+    	allow create: if isUserLoggedIn()
+      && isString(request.resource.data.supplierName)
+      && isString(request.resource.data.supplierCountry)
+      && isString(request.resource.data.supplierAddress)
+      && isString(request.resource.data.supplierVAT)
+    	&& isString(request.resource.data.supplierPost)
+      && isString(request.resource.data.supplierFirmName);
+    	allow update,delete: if isUserLoggedIn() ;
+    }
+     match /statistics/{stat=**}{
+    	allow read: if isUserLoggedIn();
+      allow write: if false;
+    }
+    match /support/{req}{
+    	allow read: if false;
+      allow write: if isUserLoggedIn();
+    }
+  }
+}
